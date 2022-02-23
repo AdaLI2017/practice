@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ""
+Resources:
+  WafWebAcl:
+    Type: "AWS::WAFv2::WebACL"
+    Properties:
+      Name: "WAF_Common_Protections_PixelForce"
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: "WAF_Common_Protections_PixelForce"
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: "AWS-AWSManagedRulesBotControlRule"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesBotControlRuleSet"
+          Priority: 0
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesBotControl"
+            SampledRequestsEnabled: true     
+        - Name: "AWS-AWSManagedRulesAmazonIpReputationList"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesAmazonIpReputationList"
+          Priority: 1
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesAmazonIpReputation"
+            SampledRequestsEnabled: true
+        - Name: "AWS-AWSManagedRulesCommonRuleSet"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesCommonRuleSet"
+              ExcludedRules:
+                - Name: SizeRestrictions_BODY           
+          Priority: 2
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesCommonRule"
+            SampledRequestsEnabled: true
+        - Name: "AWS-AWSManagedRulesKnownBadInputsRuleSet"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesKnownBadInputsRuleSet"
+          Priority: 3
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesKnownBadInputsRule"
+            SampledRequestsEnabled: true
+        - Name: "AWS-AWSManagedRulesLinuxRuleSet"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesLinuxRuleSet"
+          Priority: 4
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesLinuxRule"
+            SampledRequestsEnabled: true
+        - Name: "AWS-AWSManagedRulesUnixRuleSet"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesUnixRuleSet"
+          Priority: 5
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesUnixRule"
+            SampledRequestsEnabled: true
+        - Name: "AWS-AWSManagedRulesSQLiRuleSet"
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: "AWS"
+              Name: "AWSManagedRulesSQLiRuleSet"
+          Priority: 6
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: "AWSManagedRulesSQLiRule"
+            SampledRequestsEnabled: true
+  ProductionWebAppCloudFront:
+    Type: 'AWS::CloudFront::Distribution'
+    Properties:
+      DistributionConfig:
+        Comment: 'Production WebApp'
+        Enabled: 'true'
+        HttpVersion: 'http2'
+        DefaultRootObject: 'index.html'
+        WebACLId: !GetAtt WafWebAcl.Arn
+        Origins:
+          - DomainName: 'ProductionWebAppS3Bucket.DomainName'
+            Id: 'i-0000faf7cee74697b'
+            CustomOriginConfig:
+              OriginProtocolPolicy: match-viewer
+            OriginPath: '/app'
+        DefaultCacheBehavior:
+          AllowedMethods: [GET, HEAD]
+          TargetOriginId: 'i-0000faf7cee74697b'
+          ViewerProtocolPolicy: "redirect-to-https"
+          CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6' # CachingOptimized
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
