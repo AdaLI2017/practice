@@ -1,0 +1,101 @@
+#!/bin/bash
+
+if [ -z "$1" ] || [ "$1" == "RUBY_VERSION" ]
+then
+  echo 'Please specify Ruby Version'
+  exit 1
+fi
+
+NEW_RUBY_VERSION=$1
+sudo timedatectl set-timezone Australia/Adelaide
+echo "Installing PostgreSQL 12"
+CODE_NAME=$(cat /etc/os-release | grep UBUNTU_CODENAME | sed 's/UBUNTU_CODENAME=//' -)
+echo "deb http://apt.postgresql.org/pub/repos/apt/ $CODE_NAME-pgdg main" | sudo tee -a /etc/apt/sources.list.d/postgresql.list
+wget -q -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+sudo apt update
+sudo apt install -y postgresql-12
+DB_PASSWORD=$(openssl rand -base64 16)
+sudo su postgres -c "psql postgres -c \"ALTER USER postgres WITH PASSWORD '$DB_PASSWORD';\""
+sudo su postgres -c "psql postgres -c \"CREATE DATABASE pixelforce_staging\""
+sudo su postgres -c "psql postgres -c \"CREATE USER rep WITH REPLICATION ENCRYPTED PASSWORD '$DB_PASSWORD';\""
+sudo su postgres -c "echo *:*:*:rep:$DB_PASSWORD > ~/.pgpass"
+sudo su postgres -c 'chmod 0600 ~/.pgpass'
+echo "PostgreSQL 12 has been installed successfully"
+echo "============PostgreSQL Password============="
+echo $DB_PASSWORD
+echo "============PostgreSQL Password============="
+sudo pg_createcluster 12 standby
+sudo rm -rf /var/lib/postgresql/12/standby
+sudo su postgres -c "pg_basebackup -h 127.0.0.1 -p 5432 -U rep -D /var/lib/postgresql/12/standby -Fp -Xs -P -R"
+sudo pg_ctlcluster 12 standby start
+cat > database.yml << EOF
+staging:
+  primary:
+    adapter: postgresql
+    encoding: unicode
+    host: localhost
+    port: 5432
+    pool: 5
+    database: pixelforce_staging
+    username: postgres
+    password: $DB_PASSWORD
+  replica:
+    adapter: postgresql
+    encoding: unicode
+    host: localhost
+    port: 5433
+    pool: 5
+    database: pixelforce_staging
+    username: postgres
+    password: $DB_PASSWORD
+    replica: true
+EOF
+
+echo "Installing Additional Packages"
+curl -sL https://deb.nodesource.com/setup_12.x | sudo bash -
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y nginx gnupg2 postgresql-client libpq-dev nodejs redis-server imagemagick ffmpeg
+echo "Additional Packages installed successfully"
+
+echo "Create user deploy"
+sudo useradd deploy -s /bin/bash -m
+sudo mkdir -p /home/deploy/.ssh
+sudo chown -R deploy:deploy /home/deploy
+sudo cp .ssh/authorized_keys /home/deploy/.ssh/authorized_keys
+echo 'deploy ALL=(ALL) NOPASSWD:ALL' > /tmp/deploy
+sudo chown root:root /tmp/deploy
+sudo chmod 440 /tmp/deploy
+sudo mv /tmp/deploy /etc/sudoers.d/
+
+echo "Installing RVM"
+sudo su deploy -c 'gpg2 --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3 7D2BAF1CF37B13E2069D6956105BD0E739499BDB'
+sudo su deploy -c 'curl -sSL https://get.rvm.io | bash -s stable '
+sudo su deploy -c 'source /home/deploy/.rvm/scripts/rvm'
+sudo su deploy -c -l "rvm install $NEW_RUBY_VERSION"
+sudo su deploy -c -l 'gem install bundler --version 2.0.2 --force'
+sudo su deploy -c -l 'sudo npm install --global yarn'
+sudo rm /etc/sudoers.d/deploy
+
+echo "Installing swap"
+VM_FNAME=/mnt/swap_file.swap
+VM_SCALE=4
+PHY_MEM_MB=$(getconf -a | grep PAGES | awk 'BEGIN {total = 1} {if (NR == 1 || NR == 3) total *=$NF} END {print int(total / 1048576)}')
+PHY_MEM_MB=`expr $PHY_MEM_MB \* 1`
+if [ "$PHY_MEM_MB" -gt 4096 ]; then
+  VM_SCALE=2
+  if [ "$PHY_MEM_MB" -gt 16324 ]; then
+    VM_SCALE=1
+  fi
+fi
+VM_MEM_MB=`expr $VM_SCALE \* $PHY_MEM_MB \/ 2`m
+if [ ! -f "$VM_FNAME" ]; then
+  sudo fallocate -l $VM_MEM_MB $VM_FNAME
+  sudo chmod 600 $VM_FNAME
+  sudo mkswap $VM_FNAME
+  sudo swapon $VM_FNAME
+  sudo grep -qxF $VM_FNAME' none swap sw 0 0' /etc/fstab || echo $VM_FNAME' none swap sw 0 0' | sudo tee -a /etc/fstab
+fi
+echo "swap Installation completed!"
+
+sudo reboot
